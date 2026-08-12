@@ -100,6 +100,13 @@ def scroll_and_select_user(page, username, targets):
     logger.debug(f"账号 {username} 开始查找目标好友列表")
     logger.debug(f"账号 {username} 目标好友列表: {targets}")
 
+    try:
+        # 预先等待列表容器加载完成，设置 15 秒超时，避免默认的 120 秒死等
+        page.wait_for_selector(scrollable_friends_selector, timeout=15000)
+    except Exception as e:
+        logger.error(f"账号 {username} 未能加载好友列表容器，可能页面未正确加载或选择器失效: {e}")
+        return
+
     found_targets = set()
     # [修改] 复制一份目标列表用于追踪进度
     remaining_targets = set(targets)
@@ -180,9 +187,13 @@ def scroll_and_select_user(page, username, targets):
             #     # 不 break，继续去滚动以触发后续内容
 
             # 4. 滚动容器
-            scrollable_element = page.locator(
-                scrollable_friends_selector
-            ).element_handle()
+            try:
+                scrollable_element = page.locator(
+                    scrollable_friends_selector
+                ).element_handle(timeout=5000)
+            except Exception as e:
+                logger.error(f"账号 {username} 在滚动时无法获取容器元素，退出滚动: {e}")
+                break
 
             if scrollable_element:
                 # [修复] 记录滚动前的 scrollTop，用于检测是否真的滚动了
