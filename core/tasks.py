@@ -253,7 +253,17 @@ def do_user_task(browser, username, cookies, targets):
         url="https://www.douyin.com/chat",
     )
 
-    time.sleep(5)  # 等待5秒让过可能存在的弹窗
+    time.sleep(3)  # 等待页面基础元素加载
+    try:
+        # 尝试点击“保存”等弹窗按钮以避免Cookie失效
+        save_btn = page.locator("text='保存'").first
+        if save_btn.is_visible(timeout=3000):
+            save_btn.click()
+            logger.info(f"账号 {username} 成功点击了'保存'弹窗，以避免登录状态失效")
+            time.sleep(2)
+    except Exception as e:
+        logger.debug(f"账号 {username} 未检测到'保存'弹窗或无需点击: {e}")
+
 
     logger.debug(f"账号 {username} 开始发送消息")
     # 滚动并选择用户
