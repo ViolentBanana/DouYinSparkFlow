@@ -117,6 +117,13 @@ def main():
         print(f"{cookies_json_min}")
         print("="*50)
         
+        print("\n" + "="*50)
+        print("【如果是 Docker / 青龙面板 / 本地 部署，请使用以下环境变量】")
+        print(f"TASKS='{task_str}'")
+        print(f"{env_key}='{cookies_json_min}'")
+        print("(注：以上环境变量也可以直接填入 .env 文件中)")
+        print("="*50)
+        
         print("\n✅ 操作结束，您可以关闭本窗口。")
         browser.close()
 
