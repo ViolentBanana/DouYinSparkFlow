@@ -255,6 +255,30 @@ def do_user_task(browser, username, cookies, targets):
 
     time.sleep(5)  # 等待5秒让过可能存在的弹窗
 
+    # Cookie 过期检测：直接判断聊天列表选择器是否存在
+    try:
+        page.wait_for_selector(CONVERSATION_LIST_SELECTOR, timeout=10000)
+        logger.debug(f"账号 {username} 聊天列表加载成功，Cookie 有效")
+    except Exception:
+        # 聊天列表加载失败，说明 Cookie 过期或页面异常
+        import os
+        screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+        os.makedirs(screenshot_dir, exist_ok=True)
+        screenshot_path = os.path.join(screenshot_dir, "douyin_qrcode.png")
+        page.screenshot(path=screenshot_path, full_page=False)
+        logger.warning(f"账号 {username} Cookie 已过期，登录页截图已保存: {screenshot_path}")
+        # 发飞书通知
+        import subprocess
+        subprocess.run([
+            'openclaw', 'message', 'send',
+            '--channel', 'feishu',
+            '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+            '--media', screenshot_path,
+            '-m', f'账号 {username} Cookie 已过期，请扫码更新 🐟'
+        ], capture_output=True)
+        context.close()
+        return
+
     logger.debug(f"账号 {username} 开始发送消息")
     # 滚动并选择用户
     for username in scroll_and_select_user(page, username, targets):
