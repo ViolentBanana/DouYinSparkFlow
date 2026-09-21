@@ -255,29 +255,44 @@ def do_user_task(browser, username, cookies, targets):
 
     time.sleep(5)  # 等待5秒让过可能存在的弹窗
 
-    # Cookie 过期检测：直接判断聊天列表选择器是否存在
-    try:
-        page.wait_for_selector(CONVERSATION_LIST_SELECTOR, timeout=10000)
-        logger.debug(f"账号 {username} 聊天列表加载成功，Cookie 有效")
-    except Exception:
-        # 聊天列表加载失败，说明 Cookie 过期或页面异常
-        import os
+    # Cookie 过期检测：Cookie 失效会跳转到登录页，URL 不再是 /chat
+    current_url = page.url
+    if "douyin.com/chat" not in current_url:
+        import os, subprocess
+        from datetime import datetime
         screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
         os.makedirs(screenshot_dir, exist_ok=True)
-        screenshot_path = os.path.join(screenshot_dir, "douyin_qrcode.png")
-        page.screenshot(path=screenshot_path, full_page=False)
-        logger.warning(f"账号 {username} Cookie 已过期，登录页截图已保存: {screenshot_path}")
-        # 发飞书通知
-        import subprocess
-        subprocess.run([
-            'openclaw', 'message', 'send',
-            '--channel', 'feishu',
-            '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
-            '--media', screenshot_path,
-            '-m', f'账号 {username} Cookie 已过期，请扫码更新 🐟'
-        ], capture_output=True)
+        # 用时间戳命名，保留历史
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        screenshot_path = os.path.join(screenshot_dir, f"douyin_qrcode_{ts}.png")
+        try:
+            page.screenshot(path=screenshot_path, full_page=True)
+        except Exception as e:
+            logger.error(f"截图失败: {e}")
+        logger.warning(f"账号 {username} Cookie 已过期，URL={current_url}，截图已保存: {screenshot_path}")
+        # 发飞书通知（重试2次）
+        for attempt in range(1, 3):
+            try:
+                result = subprocess.run(
+                    [
+                        'openclaw', 'message', 'send',
+                        '--channel', 'feishu',
+                        '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+                        '--media', screenshot_path,
+                        '-m', f'账号 {username} Cookie 已过期，请运行 python3 auto_get_cookie.py 扫码更新 🐟',
+                    ],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"飞书通知已发送 (第 {attempt} 次)")
+                    break
+                else:
+                    logger.warning(f"飞书发送失败 (第 {attempt}/2 次): {result.stderr.strip()}")
+            except Exception as e:
+                logger.warning(f"飞书发送异常 (第 {attempt}/2 次): {e}")
         context.close()
         return
+    logger.debug(f"账号 {username} 页面已加载，Cookie 有效，URL={current_url}")
 
     logger.debug(f"账号 {username} 开始发送消息")
     # 滚动并选择用户

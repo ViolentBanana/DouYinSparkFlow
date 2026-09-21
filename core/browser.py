@@ -11,7 +11,7 @@ def install_browser():
     安装 Chromium 浏览器
     """
     try:
-        subprocess.run(["playwright", "install", "chromium"], check=True)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         print("浏览器安装完成，请重新运行程序。")
     except subprocess.CalledProcessError as e:
         print(f"发生未知错误：{e}")
@@ -39,8 +39,16 @@ def get_browser():
 
     try:
         # 启动浏览器
-        playwright = sync_playwright().start() 
-        browser = playwright.chromium.launch(headless=headless)
+        playwright = sync_playwright().start()
+        # 优先使用系统自带的 Chrome
+        system_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if os.path.exists(system_chrome):
+            browser = playwright.chromium.launch(
+                headless=headless,
+                executable_path=system_chrome
+            )
+        else:
+            browser = playwright.chromium.launch(headless=headless)
         return playwright, browser
     except Exception as e:
         # 捕获浏览器启动错误
@@ -50,3 +58,4 @@ def get_browser():
             sys.exit(1)
         else:
             traceback.print_exc()
+        raise

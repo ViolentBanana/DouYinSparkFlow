@@ -1,7 +1,9 @@
 import os, sys
 from enum import Enum
-import json
+import json, ast
 import logging
+from dotenv import load_dotenv
+load_dotenv()
 from utils.logger import setup_logger
 from utils import norm
 
@@ -84,7 +86,7 @@ def get_userData():
     if userData:
         return userData
 
-    tasks = json.loads(os.getenv("TASKS", "[]"))
+    tasks = ast.literal_eval(os.getenv("TASKS", "[]"))
 
     userData = []
 
@@ -94,17 +96,22 @@ def get_userData():
         if not unique_id:
             logger.warning(f"{username} 的任务  缺少 unique_id 字段，已跳过")
             continue
+        # 优先从 COOKIES_<unique_id> 环境变量读取，兜底用 TASKS 里的 cookies
         cookies_key = f"cookies_{unique_id}".upper()
         cookies_str = (
             os.getenv(cookies_key, "").encode("utf-8").decode("unicode_escape")
         )
-        if not cookies_str:
+        if cookies_str:
+            try:
+                cookies = json.loads(cookies_str)
+            except json.JSONDecodeError:
+                logger.warning(f"{username} 的任务 {cookies_key} 格式不正确，已跳过")
+                continue
+        elif task.get("cookies"):
+            # TASKS 里的 cookies 字段作为兜底（pytest 或 .env TASKS= 格式）
+            cookies = task["cookies"]
+        else:
             logger.warning(f"{username} 的任务 缺少 {cookies_key} 环境变量，已跳过")
-            continue
-        try:
-            cookies = json.loads(cookies_str)
-        except json.JSONDecodeError:
-            logger.warning(f"{username} 的任务 {cookies_key} 格式不正确，已跳过")
             continue
 
         userData.append(

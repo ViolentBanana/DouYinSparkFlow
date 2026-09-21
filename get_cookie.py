@@ -75,7 +75,17 @@ def main():
     print("========================================")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(
+            headless=False,
+            channel='chrome',
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ]
+        )
         context = browser.new_context()
         page = context.new_page()
         
