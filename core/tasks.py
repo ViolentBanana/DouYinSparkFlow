@@ -296,8 +296,10 @@ def do_user_task(browser, username, cookies, targets):
 
     logger.debug(f"账号 {username} 开始发送消息")
     # 滚动并选择用户
+    send_failures = []  # 记录发送失败的账号
     for username in scroll_and_select_user(page, username, targets):
-        logger.debug(f"账号 {username} 已选中好友 {username} 发送消息")
+        target = username  # 目标好友昵称
+        logger.debug(f"账号 {target} 已选中好友 {target} 发送消息")
         # 等待聊天输入框元素加载完成，使用更稳定的属性选择器
         chat_input_selector = CHAT_EDITOR_SELECTOR
         page.wait_for_selector(chat_input_selector, timeout=config["browserTimeout"])
@@ -311,13 +313,91 @@ def do_user_task(browser, username, cookies, targets):
             if line != message.split("\\n")[-1]:
                 chat_input.press("Shift+Enter")  # 模拟 Shift+Enter 插入换行
 
-        logger.debug(f"账号 {username} 准备发送消息给好友 {username}：\n\t{message}")
-        logger.debug(f"账号 {username} 给好友 {username} 发送消息完成")
-        # 模拟按下回车键发送消息
+        logger.debug(f"账号 {target} 准备发送消息给好友 {target}：\n\t{message}")
+        # 实际发送：按回车
         chat_input.press("Enter")
-        time.sleep(2)  # 发送完等待一会儿
+
+        # === 关键修复：验证消息是否真的出现 ===
+        time.sleep(3)  # 等待消息出现
+
+        # 验证逻辑：检查聊天记录中是否出现今日消息的关键词
+        # 消息模板含 "[盖瑞]今日火花[加一]" - 截取作为验证
+        verify_keyword = "今日火花"  # 消息中必有这个串
+        try:
+            # 获取聊天历史区域的内容（页面 body 文本）
+            page_text = page.locator('body').inner_text(timeout=5000)
+            sent_verified = verify_keyword in page_text
+        except Exception as e:
+            logger.warning(f"验证异常: {e}")
+            sent_verified = False
+
+        if sent_verified:
+            logger.info(f"✅ 账号 {target} 消息已成功发送（验证通过）")
+        else:
+            # 重试：点发送按钮（不只靠回车）
+            logger.warning(f"⚠️ 账号 {target} 验证未通过，尝试点发送按钮...")
+            try:
+                send_btn_selectors = [
+                    'button:has-text("发送")',
+                    '[class*="send"]:not([class*="sender"])',
+                    '[class*="sendBtn"]',
+                    '[data-testid="send"]',
+                ]
+                for sel in send_btn_selectors:
+                    if page.locator(sel).count() > 0:
+                        page.locator(sel).first.click(timeout=2000)
+                        logger.info(f"   点发送按钮: {sel}")
+                        break
+                time.sleep(3)
+                page_text = page.locator('body').inner_text(timeout=5000)
+                sent_verified = verify_keyword in page_text
+            except Exception as e:
+                logger.error(f"重试点击发送按钮异常: {e}")
+                sent_verified = False
+
+        if sent_verified:
+            logger.info(f"✅ 账号 {target} 重试后成功")
+        else:
+            # 验证彻底失败
+            error_msg = f"❌ 账号 {target} 火花发送失败（验证未通过）"
+            logger.error(error_msg)
+            send_failures.append({"username": target, "message": message})
+            # 截图现场
+            try:
+                fail_shot = os.path.join(screenshot_dir, f"send_fail_{target}_{int(time.time())}.png")
+                page.screenshot(path=fail_shot, full_page=False)
+                logger.error(f"失败截图: {fail_shot}")
+            except:
+                pass
 
     context.close()  # 任务完成后关闭上下文
+
+    # === 失败汇总：如果有发送失败，发飞书报警 ===
+    if send_failures:
+        alert_msg = f"🚨 抖音火花续火失败报告 ({len(send_failures)} 个账号)\n\n"
+        for f in send_failures:
+            alert_msg += f"• 账号 {f['username']}: 消息未送出\n"
+        alert_msg += "\n请检查：1) Cookie 2) 抖音 UI 变更 3) 网络"
+        logger.error(alert_msg)
+        # 主动发飞书
+        for attempt in range(1, 3):
+            try:
+                result = subprocess.run(
+                    [
+                        'openclaw', 'message', 'send',
+                        '--channel', 'feishu',
+                        '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+                        '-m', alert_msg,
+                    ],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"失败报告已发飞书 (第 {attempt} 次)")
+                    break
+                else:
+                    logger.warning(f"飞书发送失败 (第 {attempt}/2 次): {result.stderr.strip()}")
+            except Exception as e:
+                logger.warning(f"飞书发送异常 (第 {attempt}/2 次): {e}")
 
 
 def runTasks():
