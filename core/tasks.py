@@ -104,7 +104,42 @@ def scroll_and_select_user(page, username, targets):
         # 预先等待列表容器加载完成，设置 15 秒超时，避免默认的 120 秒死等
         page.wait_for_selector(scrollable_friends_selector, timeout=15000)
     except Exception as e:
-        logger.error(f"账号 {username} 未能加载好友列表容器，可能页面未正确加载或选择器失效: {e}")
+        error_msg = f"账号 {username} 未能加载好友列表容器，可能页面未正确加载或选择器失效: {e}"
+        logger.error(error_msg)
+        # === 修复：失败时截图 + 主动发飞书 ===
+        try:
+            import os
+            from datetime import datetime
+            screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+            os.makedirs(screenshot_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            fail_shot = os.path.join(screenshot_dir, f"friend_list_fail_{ts}.png")
+            page.screenshot(path=fail_shot, full_page=False)
+            logger.error(f"好友列表加载失败截图: {fail_shot}")
+        except Exception as se:
+            logger.error(f"截图失败: {se}")
+            fail_shot = None
+        # 发飞书报警
+        import subprocess
+        alert_msg = f"🚨 抖音火花 - 好友列表加载失败\n\n账号: {username}\n目标: {targets}\nURL: {page.url}\n错误: {str(e)[:200]}"
+        for attempt in range(1, 3):
+            try:
+                cmd = [
+                    'openclaw', 'message', 'send',
+                    '--channel', 'feishu',
+                    '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+                    '-m', alert_msg,
+                ]
+                if fail_shot:
+                    cmd.extend(['--media', fail_shot])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    logger.info(f"好友列表失败已报警 (第 {attempt} 次)")
+                    break
+                else:
+                    logger.warning(f"飞书发送失败 ({attempt}/2): {result.stderr.strip()}")
+            except Exception as fe:
+                logger.warning(f"飞书异常 ({attempt}/2): {fe}")
         return
 
     found_targets = set()
@@ -422,8 +457,31 @@ def runTasks():
             # 创建任务
             do_user_task(browser, username, cookies, targets)
             logger.info(f"账号 {username} 任务完成")
+    except Exception as e:
+        # === 修复：顶层异常也发飞书，不再静默 ===
+        error_msg = f"🚨 抖音火花 - runTasks 顶层崩溃\n\n错误: {type(e).__name__}: {str(e)[:300]}"
+        logger.error(f"runTasks 顶层异常: {e}", exc_info=True)
+        try:
+            import subprocess
+            result = subprocess.run(
+                [
+                    'openclaw', 'message', 'send',
+                    '--channel', 'feishu',
+                    '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+                    '-m', error_msg,
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            logger.info(f"runTasks 崩溃已发飞书: rc={result.returncode}")
+        except Exception as fe:
+            logger.error(f"连飞书都发不出去: {fe}")
     finally:
         # 关闭浏览器实例
-        browser.close()
-
-        playwright.stop()
+        try:
+            browser.close()
+        except:
+            pass
+        try:
+            playwright.stop()
+        except:
+            pass
