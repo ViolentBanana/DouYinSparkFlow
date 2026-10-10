@@ -290,9 +290,47 @@ def do_user_task(browser, username, cookies, targets):
 
     time.sleep(5)  # 等待5秒让过可能存在的弹窗
 
-    # Cookie 过期检测：Cookie 失效会跳转到登录页，URL 不再是 /chat
+    # ============ Cookie 过期检测（真实 DOM 检测）============
+    # 问题：之前只检查 URL，cookie 失效时 URL 还是 douyin.com/chat（登录弹窗覆盖页面），
+    # 导致检测不生效。
+    # 修复：同时检查 1) URL 2) 实际登录态元素 (好友列表 / 聊天输入框)。
     current_url = page.url
-    if "douyin.com/chat" not in current_url:
+    login_indicators = [
+        'text=扫码登录',                      # 二维码登录提示
+        'text=登录到抖言',                       # 扫话“登录到抖言”
+        'text=未登录',                          # 未登录提示
+        'text=请先登录',                         # 请先登录
+        'canvas',                              # QR 码 canvas 元素
+        '[class*="login"]',                   # 任何含 login 的 class
+        '[class*="qrcode"]',                  # 任何含 qrcode 的 class
+    ]
+    is_login_modal = False
+    for sel in login_indicators:
+        try:
+            if page.locator(sel).count() > 0:
+                is_login_modal = True
+                logger.debug(f"检测到登录弹窗元素: {sel}")
+                break
+        except Exception:
+            pass
+
+    # 实际登录态验证：能否找到好友列表 或 聊天输入框
+    is_logged_in = False
+    login_state_selectors = [
+        CONVERSATION_LIST_SELECTOR,   # 好友列表容器
+        CHAT_EDITOR_SELECTOR,         # 聊天输入框
+    ]
+    for sel in login_state_selectors:
+        try:
+            if page.locator(sel).count() > 0:
+                is_logged_in = True
+                logger.debug(f"找到登录态元素: {sel}")
+                break
+        except Exception:
+            pass
+
+    # 三重判断：URL 不对 / 有登录弹窗 / 都没拿到登录态元素 → Cookie 过期
+    if ("douyin.com/chat" not in current_url) or is_login_modal or (not is_logged_in):
         import os, subprocess
         from datetime import datetime
         screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
@@ -304,22 +342,52 @@ def do_user_task(browser, username, cookies, targets):
             page.screenshot(path=screenshot_path, full_page=True)
         except Exception as e:
             logger.error(f"截图失败: {e}")
-        logger.warning(f"账号 {username} Cookie 已过期，URL={current_url}，截图已保存: {screenshot_path}")
+            screenshot_path = None
+
+        # 记录原因
+        reasons = []
+        if "douyin.com/chat" not in current_url:
+            reasons.append(f"URL={current_url}")
+        if is_login_modal:
+            reasons.append("页面出现登录弹窗")
+        if not is_logged_in:
+            reasons.append("未找到登录态元素（好友列表/聊天输入框）")
+        reason_str = "; ".join(reasons)
+        logger.warning(f"账号 {username} Cookie 已过期，{reason_str}，截图: {screenshot_path}")
+
+        # 写本地标记文件（连飞书都发不出去时，cron 下一轮可以读到）
+        try:
+            flag_path = os.path.join(screenshot_dir, "NEED_COOKIE_UPDATE.flag")
+            with open(flag_path, "w") as f:
+                f.write(f"{datetime.now().isoformat()}\nusername={username}\nreasons={reason_str}\n")
+        except Exception as e:
+            logger.error(f"写 flag 失败: {e}")
+
         # 发飞书通知（重试2次）
+        alert_text = (
+            f'账号 {username} Cookie 已过期\n\n'
+            f'原因: {reason_str}\n'
+            f'时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n'
+            f'处理: 运行 python3 auto_get_cookie.py 扫码更新 🐟'
+        )
         for attempt in range(1, 3):
             try:
-                result = subprocess.run(
-                    [
-                        'openclaw', 'message', 'send',
-                        '--channel', 'feishu',
-                        '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
-                        '--media', screenshot_path,
-                        '-m', f'账号 {username} Cookie 已过期，请运行 python3 auto_get_cookie.py 扫码更新 🐟',
-                    ],
-                    capture_output=True, text=True, timeout=30,
-                )
+                cmd = [
+                    'openclaw', 'message', 'send',
+                    '--channel', 'feishu',
+                    '--target', 'ou_5e2c5ce15f2c29c6859f839d13cadc67',
+                    '-m', alert_text,
+                ]
+                if screenshot_path:
+                    cmd.extend(['--media', screenshot_path])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
                     logger.info(f"飞书通知已发送 (第 {attempt} 次)")
+                    # 发成功后删 flag（避免重复报警）
+                    try:
+                        os.remove(flag_path)
+                    except Exception:
+                        pass
                     break
                 else:
                     logger.warning(f"飞书发送失败 (第 {attempt}/2 次): {result.stderr.strip()}")
@@ -327,6 +395,7 @@ def do_user_task(browser, username, cookies, targets):
                 logger.warning(f"飞书发送异常 (第 {attempt}/2 次): {e}")
         context.close()
         return
+    logger.debug(f"账号 {username} 页面已加载，Cookie 有效，URL={current_url}")
     logger.debug(f"账号 {username} 页面已加载，Cookie 有效，URL={current_url}")
 
     logger.debug(f"账号 {username} 开始发送消息")
