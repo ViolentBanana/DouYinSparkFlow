@@ -337,7 +337,8 @@ def do_user_task(browser, username, cookies, targets):
         except Exception:
             pass
 
-    # 登录态验证：能否找到好友列表 或 聊天输入框（多个选择器兜底）
+    # 登录态验证：用 wait_for_selector 真等元素出现（不是 count() 立即查）
+    # 修复 2026-10-15 09:00 误报：count() 不等加载立即返回 0 → 判过期
     is_logged_in = False
     login_state_selectors = [
         CONVERSATION_LIST_SELECTOR,   # 好友列表容器
@@ -345,12 +346,27 @@ def do_user_task(browser, username, cookies, targets):
     ]
     for sel in login_state_selectors:
         try:
-            if page.locator(sel).count() > 0:
-                is_logged_in = True
-                logger.debug(f"找到登录态元素: {sel}")
-                break
-        except Exception:
-            pass
+            # 真等 15 秒，页面慢加载会等够
+            page.wait_for_selector(sel, timeout=15000, state="visible")
+            is_logged_in = True
+            logger.debug(f"✓ 找到登录态元素: {sel}")
+            break
+        except Exception as e:
+            logger.debug(f"  未找到 {sel}: {e}")
+            continue
+
+    # 首次等待超时后重试一次（页面可能刚加载完"保存登录信息"弹窗）
+    if not is_logged_in:
+        logger.warning("首次等待未找到登录态元素，再等 5 秒重试（可能刚加载完弹窗）")
+        time.sleep(5)
+        for sel in login_state_selectors:
+            try:
+                if page.locator(sel).count() > 0:
+                    is_logged_in = True
+                    logger.debug(f"✓ 重试后找到登录态元素: {sel}")
+                    break
+            except Exception:
+                pass
 
     # 判断 cookie 过期（去掉 canvas 误判 + save 弹窗不算失效）
     if ("douyin.com/chat" not in current_url) or is_real_login_page or (not is_logged_in):
